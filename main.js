@@ -12,6 +12,7 @@ const configuration = new Configuration({
 	apiKey: process.env.OPENAI_API_KEY,
 });
 const DISCORD_API_KEY = process.env.DISCORD_API_KEY;
+const APPLICATION_ID = process.env.APPLICATION_ID;
 const openai = new OpenAIApi(configuration);
 
 let isHelp = false;
@@ -55,7 +56,7 @@ const rest = new REST({ version: "10" }).setToken(DISCORD_API_KEY);
 	try {
 		console.log("Started refreshing application (/) commands.");
 
-		await rest.put(Routes.applicationCommands("1071581786762645505"), {
+		await rest.put(Routes.applicationCommands(APPLICATION_ID), {
 			body: commands,
 		});
 
