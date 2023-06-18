@@ -16,21 +16,18 @@ const APPLICATION_ID = process.env.APPLICATION_ID;
 //const SERVER_ID = process.env.SERVER_ID;
 //optional, can change to list/map if you want to support multiple channels
 const CHANNEL_ID = process.env.CHANNEL_ID;
-let blockedUsers = process.env.BLOCKED_USERS.split(",");
+//let blockedUsers = process.env.BLOCKED_USERS.split(",");
 
 const openai = new OpenAIApi(configuration);
 
 let userSessionMap = new Map();
 let conversations = new Map();
+let someoneUsing = false;
 
 const commands = [
     {
         name: "complete",
         description: "Replies with: Complete your prompt.",
-    },
-    {
-        name: "image",
-        description: "Replies with: Describe your image.",
     },
     {
         name: "clear",
@@ -53,13 +50,9 @@ const commands = [
         description: "Create a channel.",
     },
     {
-        name: "random-image",
-        description: "Generate a random image.",
+        name: "new-image",
+        description: "Generate a new image.",
     }
-    // {
-    // 	name: "audio",
-    // 	description: "Transcribes or translates audio.",
-    // },
 ];
 
 const rest = new REST({ version: "10" }).setToken(DISCORD_API_KEY);
@@ -98,7 +91,7 @@ client.on('ready', async () => {
 client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     if (interaction.user.bot) return;
-    if (interaction.user.id in blockedUsers) return;
+    //if (interaction.user.id in blockedUsers) return;
 
     if (interaction.commandName === "close") {
         const channel = client.channels.cache.get(
@@ -158,10 +151,9 @@ client.on("interactionCreate", async (interaction) => {
         userSession = {
             isIn: true,
             isHelp: false,
-            isImage: false,
             isEdit: false,
             isChat: false,
-            isTest: false,
+            isNew: false,
             current_user_id: interaction.user.tag,
             timeout: setTimeout(() => {
                 userSessionMap.delete(interaction.user.id);
@@ -174,20 +166,21 @@ client.on("interactionCreate", async (interaction) => {
         userSession &&
         userSession.isIn &&
         (userSession.isHelp ||
-            userSession.isImage ||
+            //userSession.isImage ||
             userSession.isEdit ||
-            userSession.isChat)
+            userSession.isChat || userSession.isNew)
     ) {
         interaction.reply("```Finish your intitial command.```");
         return;
     }
 
-    if (interaction.commandName === "random-image") {
-        userSession.isTest = true;
+    if (interaction.commandName === "new-image") {
+        userSession.isNew = true;
+        if (someoneUsing){interaction.reply("```Please wait until not in use to reduce GPU strain.```"); return;}
         userSessionMap.set(interaction.user.id, userSession);
 
-        await interaction.reply("```Generating a random image.```");
-        Try_Gen();
+        await interaction.reply("```Enter your prompt.```");
+        someoneUsing = true;
     }
 
     if (interaction.commandName === "complete") {
@@ -195,15 +188,6 @@ client.on("interactionCreate", async (interaction) => {
         userSessionMap.set(interaction.user.id, userSession);
 
         await interaction.reply("```Complete your prompt?```");
-    }
-
-    if (interaction.commandName === "image") {
-        userSession.isImage = true;
-        userSessionMap.set(interaction.user.id, userSession);
-
-        await interaction.reply(
-            "```Describe your image. Format should be: [Prompt] [Type of image(4k, pencil, etc)]```"
-        );
     }
 
     if (interaction.commandName === "edit") {
@@ -220,7 +204,6 @@ client.on("interactionCreate", async (interaction) => {
         const channel = await guild.channels.create({
             name: `edit-${interaction.user.tag}`,
             type: ChannelType.GuildText,
-            //parent: "899999999999999999",
             permissionOverwrites: [
                 {
                     id: guild.roles.everyone.id,
@@ -252,7 +235,6 @@ client.on("interactionCreate", async (interaction) => {
         const channel = await guild.channels.create({
             name: `chat-${interaction.user.tag} #` + Math.floor(Math.random() * 1000),
             type: ChannelType.GuildText,
-            //parent: "899999999999999999",
             permissionOverwrites: [
                 {
                     id: guild.roles.everyone.id,
@@ -281,6 +263,13 @@ client.on("messageCreate", async (msg) => {
         // set a new timeout
         userSessionMap.delete(msg.author.id);
     }, 5 * 60 * 1000); // 5 minutes timeout
+
+    if (userSession.isNew) {
+        msg.content = msg.content.toLowerCase();
+        msg.reply("```Generating your image... This might take some time.```");
+        Try_Gen(msg.content);
+        userSession.isNew = false;
+    }
 
     if (userSession.isHelp) {
         msg.content = msg.content.toLowerCase();
@@ -318,36 +307,6 @@ client.on("messageCreate", async (msg) => {
         // Done
         userSession.isHelp = false;
         userSession.isIn = false;
-    } else if (userSession.isImage) {
-        msg.content = msg.content.toLowerCase();
-
-        msg.reply("```Creating your image...```");
-
-        try {
-            const response = await openai.createImage({
-                prompt: msg.content.toString(),
-                n: 1,
-                size: "1024x1024",
-            });
-            let links = response.data.data.map((element) => {
-                return element.url;
-            });
-            if (links.length > 0) {
-                links.forEach((element) => {
-                    msg.reply(element);
-                });
-            } else {
-                msg.reply(
-                    "The request was either blocked or the image could not be created."
-                );
-            }
-
-            userSession.isImage = false;
-            userSession.isIn = false;
-        } catch (error) {
-            msg.reply("```" + error + "```");
-            return;
-        }
     } else if (userSession.isEdit) {
         if (msg.author.bot || !msg.channel.name.startsWith("edit-")) return;
 
@@ -469,15 +428,47 @@ client.on("messageCreate", async (msg) => {
     }
 });
 
-function Try_Gen() {
+async function Try_Gen(prompt) {
     const { spawn } = require('child_process');
-    const python = spawn('/usr/bin/python3', ['./runmodel.py']);
+
+    // '/Users/michaelferraro/anaconda3/bin/conda' is the path to the 'conda' command
+    const condaPath = '/Users/mferr/AppData/Local/Programs/Python/Python311/python.exe';
+    const condaArgs = prompt;
+
+    const python = spawn(condaPath, [`./stable-diffuse-v1.py`, condaArgs]);
+
     let filenames = [];
+    let discordMessage = await client.channels.cache.get(CHANNEL_ID).send('```Starting...```');
 
     python.stdout.on('data', (data) => {
         // Assuming filenames are printed line by line
         filenames.push(data.toString().trim());
     });
+
+    //print error
+    let messageQueue = [];
+    let isSending = false;
+
+    python.stderr.on('data', async (data) => {
+        console.error(`stderr: ${data}`);
+        messageQueue.push(data);
+
+        if (!isSending) {
+            isSending = true;
+            setInterval(sendMessage, 1000);
+        }
+    });
+
+    function sendMessage() {
+        if (messageQueue.length > 0) {
+            let message = messageQueue.pop();
+            discordMessage.edit("```" + message + "```");
+            messageQueue = [];
+        } else {
+            isSending = false;  // If no messages left to send, stop the interval.
+            clearInterval(this);
+        }
+    }
 
     python.on('close', (code) => {
         console.log(`Python script exited with code ${code}`);
@@ -488,6 +479,7 @@ function Try_Gen() {
                 files: [filename]
             });
         }
+        someoneUsing = false;
     });
 
 }
