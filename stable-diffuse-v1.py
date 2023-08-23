@@ -11,7 +11,7 @@ pipe = pipe.to("cuda")
 prompt = sys.argv[1]
 pipe.max_split_size_mb = 256
 
-neg_p = "low resolution, blurry, mishapen face, retarded, blurry, bad quality, bad render, not realistic, bad anatomy, blurry, fuzzy, disfigured, misshaped, mutant, mutated, deformed, bad art, out of frame, poor quality, not good"
+neg_p = "low resolution, blurry, mishapen face, blurry, bad quality, bad render, not realistic, bad anatomy, blurry, fuzzy, disfigured, misshaped, mutant, mutated, deformed, bad art, out of frame, poor quality, not good"
 
 image = pipe(prompt,negative_prompt=neg_p, width=640,height=768,num_inference_steps=125,guidance_scale=12).images[0]
 image_filename = "output.png"
