@@ -20,6 +20,9 @@ const CHANNEL_ID = process.env.CHANNEL_ID;
 
 const openai = new OpenAIApi(configuration);
 
+// replace with your path to python
+const PATH = '/Users/mferr/AppData/Local/Programs/Python/Python311/python.exe';
+
 let userSessionMap = new Map();
 let conversations = new Map();
 let someoneUsing = false;
@@ -430,9 +433,7 @@ client.on("messageCreate", async (msg) => {
 
 async function Try_Gen(prompt) {
     const { spawn } = require('child_process');
-
-    // '/Users/michaelferraro/anaconda3/bin/conda' is the path to the 'conda' command
-    const condaPath = '/Users/mferr/AppData/Local/Programs/Python/Python311/python.exe';
+    const condaPath = PATH;
     const condaArgs = prompt;
 
     const python = spawn(condaPath, [`./stable-diffuse-v1.py`, condaArgs]);
