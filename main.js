@@ -25,6 +25,9 @@ let channel_user = null;
 
 const openai = new OpenAIApi(configuration);
 
+// replace with your path to python
+const PATH = '/Users/mferr/AppData/Local/Programs/Python/Python311/python.exe';
+
 let userSessionMap = new Map();
 let conversations = new Map();
 let someoneUsing = false;
