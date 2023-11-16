@@ -3,15 +3,19 @@ import torch
 import sys
 
 model_id = "runwayml/stable-diffusion-v1-5"
+#model_id = "dreamlike-art/dreamlike-photoreal-2.0"
 
 pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16)
 pipe.safety_checker = None
+pipe.sampler = "dpm++_sde_karras"
+
 
 pipe = pipe.to("cuda")
 prompt = sys.argv[1]
 pipe.max_split_size_mb = 256
-
-image = pipe(prompt,negative_prompt="low resolution, blurry, mishapen face, retarded, blurry, bad quality, bad render, not realistic, bad anatomy, blurry, fuzzy, disfigured, misshaped, mutant, mutated, deformed, bad art, out of frame, poor quality, not good", width=640,height=768,num_inference_steps=125,guidance_scale=12).images[0]
+width = 512
+height = 512
+image = pipe(prompt, negative_prompt="EasyNegative,DeepNegative,extra digit,fewer digits,head out of frame,long neck, multiple bodys, multiple heads, multiple people, multiple legs, conjoined people, weird faces, multiple faces, disjointed limbs, multiple limbs, multiple feet, multiple hands", width=width,height=height,num_inference_steps=110,guidance_scale=12).images[0]
 image_filename = "output.png"
 image.save(image_filename)
 

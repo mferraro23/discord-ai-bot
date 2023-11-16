@@ -1,22 +1,27 @@
 require("dotenv").config();
 
-const { REST, Routes } = require("discord.js");
-const MessageAttachment = require("discord.js");
-const ChannelType = require("discord.js");
-const { PermissionsBitField } = require("discord.js");
+const { REST, Routes, MessageAttachment, ChannelType, PermissionsBitField } = require("discord.js");
 const { Configuration, OpenAIApi } = require("openai");
 const axios = require("axios");
 const fs = require("fs");
 
+// Validate required environment variables
+const requiredEnvVars = ['OPEN_API_KEY', 'DISCORD_API_KEY', 'APPLICATION_ID', 'CHANNEL_ID', 'CHANNEL_ID2'];
+requiredEnvVars.forEach(envVar => {
+    if (!process.env[envVar]) {
+        throw new Error(`Environment variable ${envVar} is missing`);
+    }
+});
+
 const configuration = new Configuration({
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: process.env.OPEN_API_KEY,
 });
 const DISCORD_API_KEY = process.env.DISCORD_API_KEY;
 const APPLICATION_ID = process.env.APPLICATION_ID;
-//const SERVER_ID = process.env.SERVER_ID;
-//optional, can change to list/map if you want to support multiple channels
 const CHANNEL_ID = process.env.CHANNEL_ID;
+const CHANNEL_ID2 = process.env.CHANNEL_ID2;
 //let blockedUsers = process.env.BLOCKED_USERS.split(",");
+let channel_user = null;
 
 const openai = new OpenAIApi(configuration);
 
@@ -50,14 +55,18 @@ const commands = [
         description: "Create a channel.",
     },
     {
-        name: "new-image",
-        description: "Generate a new image.",
+        name: "sd-base",
+        description: "Generate a new image using Stable Diffuse (base).",
+    },
+    {
+        name: "sd-dream",
+        description: "Generate a new image using Stable Diffuse (dream).",
     }
 ];
 
 const rest = new REST({ version: "10" }).setToken(DISCORD_API_KEY);
 
-(async () => {
+async function registerCommands() {
     try {
         console.log("Started refreshing application (/) commands.");
 
@@ -67,11 +76,15 @@ const rest = new REST({ version: "10" }).setToken(DISCORD_API_KEY);
 
         console.log("Successfully reloaded application (/) commands.");
     } catch (error) {
-        console.error(error);
+        console.error('Failed to refresh commands: ', error.message);
     }
-})();
+}
+
+// Invoke the registerCommands function and handle any uncaught errors
+registerCommands().catch(console.error);
 
 const { Client, GatewayIntentBits } = require("discord.js");
+const { channel } = require("diagnostics_channel");
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -84,201 +97,306 @@ const client = new Client({
 
 client.on('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
-    //const guild = client.guilds.cache.get(SERVER_ID);
-    //if (!guild) return console.error('Guild not found!');
 });
 
+// Define allowed channels for bot commands
+const allowedChannels = new Set([CHANNEL_ID, CHANNEL_ID2]);
+
 client.on("interactionCreate", async (interaction) => {
-    if (!interaction.isChatInputCommand()) return;
-    if (interaction.user.bot) return;
-    //if (interaction.user.id in blockedUsers) return;
-
-    if (interaction.commandName === "close") {
-        const channel = client.channels.cache.get(
-            interaction.channelId.toString()
-        );
-        if (channel == CHANNEL_ID) {
-            interaction.reply("```You can't close this channel.```");
-            return;
-        }
-        channel.delete();
-    }
-
-    if (interaction.commandName === "clear") {
-        const channel = client.channels.cache.get(
-            interaction.channelId.toString()
-        );
-
-        async function clear() {
-            try {
-                const fetched = await channel.messages.fetch({ limit: 100 });
-                if (fetched.size === 0) {
-                    return interaction.followUp({
-                        content: "```No more messages to clear.```",
-                        ephemeral: true,
-                    });
-                } else {
-                    await channel.bulkDelete(fetched, true);
-                    clear();
-                }
-            } catch (error) {
-                return interaction.followUp({
-                    content:
-                        "```Can't delete messages that are over 14 days old.```",
-                    ephemeral: true,
-                });
-            }
-        }
-
-        // Respond to the interaction immediately
-        await interaction.reply({
-            content: "```Starting to clear chat history...```",
-            ephemeral: true,
-        });
-
-        // Then clear messages asynchronously
-        clear();
-    }
-
-    if (interaction.channelId !== CHANNEL_ID) {
-        interaction.reply(`I CANT WORK IN HERE USE <#${CHANNEL_ID}> INSTEAD!!!!!`);
+    if (!interaction.isChatInputCommand() || interaction.user.bot) return;
+    if (!allowedChannels.has(interaction.channelId)) {
+        // Inform user this channel is not permitted for bot interaction
+        await interaction.reply({ content: 'I cannot work here. Please use the designated channels.', ephemeral: true });
         return;
+    }
+
+    // Define clear function for the 'clear' command
+    async function clearChannelMessages(channel) {
+        try {
+            const fetched = await channel.messages.fetch({ limit: 100 });
+            if (fetched.size === 0) {
+                await interaction.followUp({ content: 'No more messages to clear.', ephemeral: true });
+            } else {
+                await channel.bulkDelete(fetched, true);
+                await clearChannelMessages(channel);  // Recursively clear messages if more remain
+            }
+        } catch (error) {
+            await interaction.followUp({ content: 'Cannot delete messages that are over 14 days old.', ephemeral: true });
+        }
     }
 
     let userSession = userSessionMap.get(interaction.user.id);
 
-    if (interaction.isChatInputCommand()) {
-        userSession = {
-            isIn: true,
-            isHelp: false,
-            isEdit: false,
-            isChat: false,
-            isNew: false,
-            current_user_id: interaction.user.tag,
-            timeout: setTimeout(() => {
-                userSessionMap.delete(interaction.user.id);
-            }, 5 * 60 * 1000), // 5 minutes timeout
-        };
-        userSessionMap.set(interaction.user.id, userSession);
-    }
+    // Handle different command interactions
+    switch (interaction.commandName) {
+        case "clear":
+            await interaction.deferReply({ ephemeral: true });
+            const channelToClear = client.channels.cache.get(interaction.channelId.toString());
+            await clearChannelMessages(channelToClear);
+            break;
 
-    if (
-        userSession &&
-        userSession.isIn &&
-        (userSession.isHelp ||
-            //userSession.isImage ||
-            userSession.isEdit ||
-            userSession.isChat || userSession.isNew)
-    ) {
-        interaction.reply("```Finish your intitial command.```");
-        return;
-    }
+        case "sd-base":
+            if (currentUserIsUsingBot(interaction.user.id)) {
+                await interaction.reply({ content: "Please wait until the bot is not in use to reduce GPU strain.", ephemeral: true });
+                return;
+            }
+            setUserSession(interaction.user.id, { isBase: true });
+            await interaction.reply("Enter your prompt:");
+            break;
 
-    if (interaction.commandName === "new-image") {
-        userSession.isNew = true;
-        if (someoneUsing){interaction.reply("```Please wait until not in use to reduce GPU strain.```"); return;}
-        userSessionMap.set(interaction.user.id, userSession);
+        case "sd-dream":
+            if (currentUserIsUsingBot(interaction.user.id)) {
+                await interaction.reply({ content: "Please wait until the bot is not in use to reduce GPU strain.", ephemeral: true });
+                return;
+            }
+            setUserSession(interaction.user.id, { isDream: true });
+            await interaction.reply("Enter your dream prompt:");
+            break;
+            
+        case "complete":
+            if (currentUserIsUsingBot(interaction.user.id) || userSession.isHelp) {
+                await interaction.reply({ content: "Please finish your initial command first, or wait if the bot is currently in use.", ephemeral: true });
+                return;
+            }
 
-        await interaction.reply("```Enter your prompt.```");
-        someoneUsing = true;
-    }
+            // Before creating the OpenAI completion, validate the prompt or any necessary inputs
+            setUserSession(interaction.user.id, { isHelp: true });
+            await interaction.reply("Complete your prompt:");
+            break;
 
-    if (interaction.commandName === "complete") {
-        userSession.isHelp = true;
-        userSessionMap.set(interaction.user.id, userSession);
+        case "edit":
+            if (currentUserIsUsingBot(interaction.user.id) || userSession.isEdit) {
+                await interaction.reply({ content: "You're already editing an image or please wait if the bot is currently in use.", ephemeral: true });
+                return;
+            }
 
-        await interaction.reply("```Complete your prompt?```");
-    }
+            setUserSession(interaction.user.id, { isEdit: true });
+            await interaction.deferReply({ ephemeral: true });
+            guild = interaction.guild;
+            member = interaction.member;
 
-    if (interaction.commandName === "edit") {
-        userSession.isEdit = true;
-        userSessionMap.set(interaction.user.id, userSession);
+            try {
+                const editChannel = await guild.channels.create({
+                    name: `edit-${interaction.user.tag}`,
+                    type: ChannelType.GuildText,
+                    permissionOverwrites: [
+                        {
+                            id: guild.roles.everyone.id,
+                            deny: [PermissionsBitField.Flags.SendMessages],
+                        },
+                        {
+                            id: member.id,
+                            allow: [PermissionsBitField.Flags.SendMessages],
+                        },
+                    ],
+                });
+                await editChannel.send("Upload your image and provide your prompt for editing.");
+            } catch (error) {
+                await interaction.followUp({ content: "Failed to create a private chat for image editing.", ephemeral: true });
+            }
+            break;
 
-        await interaction.reply(
-            "```Creating a private chat to upload your image.```"
-        );
+        case "chat":
+            if (currentUserIsUsingBot(interaction.user.id) || userSession.isChat) {
+                await interaction.reply({ content: "You're already engaging in a chat or please wait if the bot is currently in use.", ephemeral: true });
+                return;
+            }
 
-        const guild = interaction.guild;
-        const member = interaction.member;
+            setUserSession(interaction.user.id, { isChat: true });
+            await interaction.deferReply({ ephemeral: true });
+            const guild = interaction.guild;
+            const member = interaction.member;
 
-        const channel = await guild.channels.create({
-            name: `edit-${interaction.user.tag}`,
-            type: ChannelType.GuildText,
-            permissionOverwrites: [
-                {
-                    id: guild.roles.everyone.id,
-                    deny: [PermissionsBitField.Flags.SendMessages],
-                },
-                {
-                    id: member.id,
-                    allow: [PermissionsBitField.Flags.SendMessages],
-                },
-            ],
-        });
+            try {
+                const chatChannel = await guild.channels.create({
+                    name: `chat-${interaction.user.tag}-` + Math.floor(Math.random() * 1000),
+                    type: ChannelType.GuildText,
+                    permissionOverwrites: [
+                        {
+                            id: guild.roles.everyone.id,
+                            deny: [PermissionsBitField.Flags.SendMessages],
+                        },
+                        {
+                            id: member.id,
+                            allow: [PermissionsBitField.Flags.SendMessages],
+                        },
+                    ],
+                });
+                await chatChannel.send("You can now chat with your personal assistant in this private channel.");
+            } catch (error) {
+                await interaction.followUp({ content: "Failed to create a private chat channel.", ephemeral: true });
+            }
+            break;
 
-        // Send a message to the newly created channel
-        channel.send(
-            `Hello, <@${interaction.user.id}>! The format for editing an image is as follows: First select the image you want to edit, then, select a map image. A map image is an image that has transparent sections, these sections are where you want to add things to, lastly type in a prompt and send the message!`
-        );
-    }
-
-    if (interaction.commandName === "chat") {
-        userSession.isChat = true;
-        userSessionMap.set(interaction.user.id, userSession);
-
-        await interaction.reply(
-            "```Chat with your personal assistant. A new channel is being created for you.```"
-        );
-        const guild = interaction.guild;
-        const member = interaction.member;
-
-        const channel = await guild.channels.create({
-            name: `chat-${interaction.user.tag} #` + Math.floor(Math.random() * 1000),
-            type: ChannelType.GuildText,
-            permissionOverwrites: [
-                {
-                    id: guild.roles.everyone.id,
-                    deny: [PermissionsBitField.Flags.SendMessages],
-                },
-                {
-                    id: member.id,
-                    allow: [PermissionsBitField.Flags.SendMessages],
-                },
-            ],
-        });
-
-        // Send a message to the newly created channel
-        channel.send(
-            `Hello, <@${interaction.user.id}>! You can now chat with your personal assistant.`
-        );
+        default:
+            // Handle unknown command
+            await interaction.reply({ content: 'Command not recognized.', ephemeral: true });
+            break;
     }
 });
 
 client.on("messageCreate", async (msg) => {
+    // Ignore bots and ensure msg is from a guild
+    if (msg.author.bot || !msg.guild) return;
+
+    // Get the user's session or ignore the message if no command has been initiated
     let userSession = userSessionMap.get(msg.author.id);
-    if (!userSession) return; // The user is not in the middle of a command
+    if (!userSession) return;
 
-    clearTimeout(userSession.timeout); // clear the old timeout
-    userSession.timeout = setTimeout(() => {
-        // set a new timeout
-        userSessionMap.delete(msg.author.id);
-    }, 5 * 60 * 1000); // 5 minutes timeout
-
-    if (userSession.isNew) {
-        msg.content = msg.content.toLowerCase();
-        msg.reply("```Generating your image... This might take some time.```");
-        Try_Gen(msg.content);
-        userSession.isNew = false;
+    if (userSession.isBase) {
+        await handleBaseImageGeneration(msg);
+    } else if (userSession.isDream) {
+        await handleDreamImageGeneration(msg);
+    } else if (userSession.isHelp) {
+        await handleHelpCommand(msg);
+    } else if (userSession.isEdit) {
+        await handleEditCommand(msg);
+    } else if (userSession.isChat) {
+        await handleChatCommand(msg);
     }
 
-    if (userSession.isHelp) {
-        msg.content = msg.content.toLowerCase();
+});
 
-        msg.reply("```Generating your prompt...```");
+async function handleChatCommand(msg) {
+    if (currentUserIsUsingBot(msg.author.id) || !msg.channel.name.startsWith("chat-")) {
+        return; // Early return if conditions are not met or the bot is in use
+    }
 
+    const configuration = new Configuration({
+        apiKey: process.env.OPENAI_API_KEY,
+    });
+    const openai = new OpenAIApi(configuration);
+
+    if (content.toLowerCase() === "exit") {
+        conversations.delete(userId);
+        msg.reply(
+            "The conversation has ended. Feel free to restart the conversation anytime!"
+        );
+        return;
+    }
+
+    if (!conversations.has(userId)) {
+        conversations.set(userId, [
+            {
+                role: "assistant",
+                content: "You are a helpful assistant.",
+            },
+        ]);
+    }
+
+    conversations.get(userId).push({ role: "user", content: content });
+
+    const response = await openai.createChatCompletion({
+        model: "gpt-3.5-turbo-16k",
+        messages: conversations.get(userId),
+        temperature: 0.7,
+        presence_penalty: 1,
+    });
+
+    if (
+        response &&
+        response.data &&
+        response.data.choices &&
+        response.data.choices.length > 0
+    ) {
+        let botResponse = response.data.choices[0].message.content;
+
+        // Append the bot's response to the history
+        conversations
+            .get(userId)
+            .push({ role: "assistant", content: botResponse });
+
+        // Respond to the user
+        // check if the response is over 1750 characters, discord limits
+        if (botResponse.length > 1750) {
+            //if over split into messages until no text remains
+            let text = botResponse;
+            let textArray = text.match(/[\s\S]{1,1750}/g);
+            textArray.forEach((element) => {
+                msg.reply("```" + element.trim() + "```");
+            });
+        }
+        else {
+            msg.reply(botResponse);
+        }
+    } else {
+        msg.reply("The request was either blocked or the message could not be created.");
+    }
+
+    setUserSession(msg.author.id, { isChat: false, someoneUsing: false }); // Ensuring to end the chat session
+}
+
+async function handleEditCommand(msg) {
+    if (currentUserIsUsingBot(msg.author.id) || !msg.channel.name.startsWith("edit-")) {
+        return; // Early return if conditions are not met or the bot is in use
+    }
+
+    if (msg.attachments.size > 0) {
+        let attachment = msg.attachments.first();
+        let mask = msg.attachments.last();
+        let prompt = msg.content;
+
+        // Download the attachment
+        let response = await axios.get(attachment.url, {
+            responseType: "arraybuffer",
+        });
+        let buffer = response.data;
+
+        let response1 = await axios.get(mask.url, {
+            responseType: "arraybuffer",
+        });
+        let buffer1 = response1.data;
+
+        // Save it temporarily
+        fs.writeFile("./tempfile1.png", buffer, () =>
+            msg.reply("finished downloading image 1...")
+        );
+
+        fs.writeFile("./tempfile2.png", buffer1, () =>
+            msg.reply("finished downloading image 2...")
+        );
+
+        const aiResponse = await openai.createImageEdit(
+            fs.createReadStream("./tempfile1.png"),
+            prompt,
+            fs.createReadStream("./tempfile2.png"),
+            1, "512x512"
+        );
+
+        msg.reply("Awaiting response from AI...");
+
+        let links = aiResponse.data.data.map((element) => {
+            return element.url;
+        });
+        if (links.length > 0) {
+            links.forEach((element) => {
+                msg.reply(element);
+            });
+        } else {
+            msg.reply(
+                "The request was either blocked or the image could not be created."
+            );
+        }
+    } else {
+        msg.reply("Please upload an image and provide a prompt.");
+    }
+
+    setUserSession(msg.author.id, { isEdit: false, someoneUsing: false }); // Ensuring to free up the bot
+}
+
+async function handleHelpCommand(msg) {
+    if (currentUserIsUsingBot(msg.author.id)) {
+        await msg.reply("Please wait until the bot is not in use to complete your prompt.");
+        return;
+    }
+
+    msg.content = msg.content.toLowerCase();
+
+    msg.reply("```Generating your prompt...```");
+    try {
         const response = await openai.createCompletion({
             model: "text-davinci-003",
-            prompt: msg.content.toString(),
+            prompt: msg.content,
             max_tokens: 1024,
             temperature: 0.7,
             n: 1,
@@ -304,141 +422,61 @@ client.on("messageCreate", async (msg) => {
         } else {
             msg.reply("```Error: No response from AI.```");
         }
-        // Done
-        userSession.isHelp = false;
-        userSession.isIn = false;
-    } else if (userSession.isEdit) {
-        if (msg.author.bot || !msg.channel.name.startsWith("edit-")) return;
 
-        if (msg.attachments.size > 0) {
-            let attachment = msg.attachments.first();
-            let mask = msg.attachments.last();
-            let prompt = msg.content; // This is your prompt
-
-            // Download the attachment
-            let response = await axios.get(attachment.url, {
-                responseType: "arraybuffer",
-            });
-            let buffer = response.data;
-
-            let response1 = await axios.get(mask.url, {
-                responseType: "arraybuffer",
-            });
-            let buffer1 = response1.data;
-
-            // Save it temporarily
-            fs.writeFile("./tempfile1.png", buffer, () =>
-                msg.reply("finished downloading image 1...")
-            );
-
-            fs.writeFile("./tempfile2.png", buffer1, () =>
-                msg.reply("finished downloading image 2...")
-            );
-
-            const aiResponse = await openai.createImageEdit(
-                fs.createReadStream("./tempfile1.png"),
-                prompt,
-                fs.createReadStream("./tempfile2.png"),
-                1, "512x512"
-            );
-
-            msg.reply("Awaiting response from AI...");
-
-            let links = aiResponse.data.data.map((element) => {
-                return element.url;
-            });
-            if (links.length > 0) {
-                links.forEach((element) => {
-                    msg.reply(element);
-                });
-            } else {
-                msg.reply(
-                    "The request was either blocked or the image could not be created."
-                );
-            }
-            userSession.isEdit = false;
-            userSession.isIn = false;
-            userSessionMap.delete(msg.author.id);
-        }
-    } else if (userSession.isChat) {
-        if (msg.author.bot || !msg.channel.name.startsWith("chat-")) return;
-        {
-            let userId = msg.author.id;
-            let content = msg.content;
-
-            const configuration = new Configuration({
-                apiKey: process.env.OPENAI_API_KEY,
-            });
-            const openai = new OpenAIApi(configuration);
-
-            if (content.toLowerCase() === "exit") {
-                conversations.delete(userId);
-                msg.reply(
-                    "The conversation has ended. Feel free to restart the conversation anytime!"
-                );
-                return;
-            }
-
-            if (!conversations.has(userId)) {
-                conversations.set(userId, [
-                    {
-                        role: "assistant",
-                        content: "You are a helpful assistant.",
-                    },
-                ]);
-            }
-
-            conversations.get(userId).push({ role: "user", content: content });
-
-            const response = await openai.createChatCompletion({
-                model: "gpt-3.5-turbo-16k",
-                messages: conversations.get(userId),
-                temperature: 0.7,
-                presence_penalty: 1,
-            });
-
-            if (
-                response &&
-                response.data &&
-                response.data.choices &&
-                response.data.choices.length > 0
-            ) {
-                let botResponse = response.data.choices[0].message.content;
-
-                // Append the bot's response to the history
-                conversations
-                    .get(userId)
-                    .push({ role: "assistant", content: botResponse });
-
-                // Respond to the user
-                // check if the response is over 1750 characters, discord limits
-                if (botResponse.length > 1750) {
-                    //if over split into messages until no text remains
-                    let text = botResponse;
-                    let textArray = text.match(/[\s\S]{1,1750}/g);
-                    textArray.forEach((element) => {
-                        msg.reply("```" + element.trim() + "```");
-                    });
-                }
-                else {
-                    msg.reply(botResponse);
-                }
-            }
-        }
+    } catch (error) {
+        msg.reply("Error: Unable to generate a prompt from your input.");
     }
-});
 
-async function Try_Gen(prompt) {
+    setUserSession(msg.author.id, { isHelp: false, someoneUsing: false }); // Reset states
+}
+
+async function handleBaseImageGeneration(msg) {
+    if (currentUserIsUsingBot(msg.author.id)) {
+        await msg.reply("Please wait until the bot is not in use to reduce GPU strain.");
+        return;
+    }
+    // Logic for processing the base image generation
+    msg.content = msg.content.toLowerCase();
+    await msg.reply("Generating your image... This might take some time.");
+    // Example call to an image generation function
+    await Try_Gen(msg.content, 0, msg);
+
+    // Update the bot usage state
+    setUserSession(msg.author.id, { isBase: false, someoneUsing: false }); // Reset states
+}
+
+async function handleDreamImageGeneration(msg) {
+    if (currentUserIsUsingBot(msg.author.id)) {
+        await msg.reply("Please wait until the bot is not in use to reduce GPU strain.");
+        return;
+    }
+    // Logic for processing the base image generation
+    msg.content = msg.content.toLowerCase();
+    await msg.reply("Generating your image... This might take some time.");
+    // Example call to an image generation function
+    await Try_Gen(msg.content, 1, msg);
+
+    // Update the bot usage state
+    setUserSession(msg.author.id, { isDream: false, someoneUsing: false }); // Reset states
+}
+
+async function Try_Gen(prompt, delimiter, msg) {
     const { spawn } = require('child_process');
 
     // '/Users/michaelferraro/anaconda3/bin/conda' is the path to the 'conda' command
-    const condaPath = '/Users/mferr/AppData/Local/Programs/Python/Python311/python.exe';
+    const condaPath = '/Users/mferr/AppData/Local/Microsoft/WindowsApps/python3.11.exe';
     const condaArgs = prompt;
 
-    const python = spawn(condaPath, [`./stable-diffuse-v1.py`, condaArgs]);
+    let files = [`./stable-diffuse-v1.py`, `./dream-like-v2.py`];
+    let names = ['Base', 'Dream'];
+
+    const python = spawn(condaPath, [files[delimiter], condaArgs]);
+    let channel = msg.channel;
 
     let filenames = [];
-    let discordMessage = await client.channels.cache.get(CHANNEL_ID).send('```Starting...```');
+    await channel.send('```Using Stable Diffusion\nModel: ' + names[delimiter] + '```');
+    const discordMessage = await channel.send('```Starting...```');
+
 
     python.stdout.on('data', (data) => {
         // Assuming filenames are printed line by line
@@ -475,12 +513,30 @@ async function Try_Gen(prompt) {
         // Send the images once the Python script has finished executing
         for (let filename of filenames) {
             //send to channel with CHANNEL_ID
-            client.channels.cache.get(CHANNEL_ID).send({
+            channel.send({
                 files: [filename]
             });
         }
-        someoneUsing = false;
+        setUserSession(msg.author.id, { isDream: false, isBase: false, someoneUsing: false }); // Reset states
     });
 
 }
+
+// Helper functions for user session and bot usage management
+function currentUserIsUsingBot(userId) {
+    return someoneUsing && userSessionMap.get(userId);
+}
+
+function setUserSession(userId, sessionData) {
+    const defaultSession = { isIn: true, timeout: createSessionTimeout(userId) };
+    userSessionMap.set(userId, { ...defaultSession, ...sessionData });
+}
+
+function createSessionTimeout(userId) {
+    return setTimeout(() => {
+        userSessionMap.delete(userId);
+        // Notify the user that their session has ended due to inactivity if desired
+    }, 5 * 60 * 1000); // 5 minutes timeout
+}
+
 client.login(DISCORD_API_KEY);
