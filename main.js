@@ -172,7 +172,7 @@ client.on("interactionCreate", async (interaction) => {
                 return;
             }
             setUserSession(interaction.user.id, { isBase: true });
-            await interaction.reply("Enter your prompt:");
+            await interaction.reply("```Enter your prompt:```");
             break;
 
         case "sd-dream":
@@ -181,18 +181,18 @@ client.on("interactionCreate", async (interaction) => {
                 return;
             }
             setUserSession(interaction.user.id, { isDream: true });
-            await interaction.reply("Enter your dream prompt:");
+            await interaction.reply("```Enter your dream prompt:```");
             break;
             
         case "complete":
             if (currentUserIsUsingBot(interaction.user.id) || userSession.isHelp) {
-                await interaction.reply({ content: "Please finish your initial command first, or wait if the bot is currently in use.", ephemeral: true });
+                await interaction.reply({ content: "```Please finish your initial command first, or wait if the bot is currently in use.", ephemeral: true });
                 return;
             }
 
             // Before creating the OpenAI completion, validate the prompt or any necessary inputs
             setUserSession(interaction.user.id, { isHelp: true });
-            await interaction.reply("Complete your prompt:");
+            await interaction.reply("```Complete your prompt:```");
             break;
 
         case "variation":
@@ -287,8 +287,8 @@ client.on("interactionCreate", async (interaction) => {
                         },
                     ],
                 });
-                await interaction.followUp({ content: "Created a private chat channel for you.\nClick #" + name + " to chat.", ephemeral: true });
-                await chatChannel.send("You can now chat with your personal assistant in this private channel.");
+                await interaction.followUp({ content: "```Created a private chat channel for you.\nClick ```#" + name + "``` to chat.```", ephemeral: true });
+                await chatChannel.send("```You can now chat with your personal assistant in this private channel.```");
             } catch (error) {
                 await interaction.followUp({ content: "Failed to create a private chat channel.", ephemeral: true });
             }
@@ -453,7 +453,17 @@ async function handleVariationCommand(msg) {
                 //send to channel with CHANNEL_ID
                 channel.send({
                     files: [filename]
-                });
+                }).then(msg => {
+                    // username string
+                    let buildMentionString = `${mentionString}`;
+                    msg.reply(buildMentionString);
+                    fs.unlink(filename, (err) => {
+                        if (err) {
+                            console.error(err)
+                            return
+                        }
+                    })
+                });;
             }
             setUserSession(msg.author.id, { isVariation: false, someoneUsing: false }); // Reset states
         });
@@ -531,6 +541,16 @@ async function handleEditCommand(msg) {
                 //send to channel with CHANNEL_ID
                 channel.send({
                     files: [filename]
+                }).then(msg => {
+                    // username string
+                    let buildMentionString = `${mentionString}`;
+                    msg.reply(buildMentionString);
+                    fs.unlink(filename, (err) => {
+                        if (err) {
+                            console.error(err)
+                            return
+                        }
+                    })
                 });
             }
             setUserSession(msg.author.id, { isEdit: false, someoneUsing: false }); // Reset states
