@@ -46,6 +46,10 @@ const commands = [
         description: "Edit an image.",
     },
     {
+        name: "variation",
+        description: "Create a variation of an image.",
+    },
+    {
         name: "close",
         description: "Close the private chat.",
     },
@@ -107,11 +111,24 @@ const allowedChannels = new Set([CHANNEL_ID, CHANNEL_ID2]);
 
 client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand() || interaction.user.bot) return;
+    if (interaction.commandName === 'close' && (interaction.channel.name.startsWith('edit-') || interaction.channel.name.startsWith('chat-') || interaction.channel.name.startsWith('variation-'))) {
+        try {
+            await interaction.channel.delete("Closing channel as requested.");
+            console.log(`Channel closed: ${interaction.channel.name}`);
+        } catch (error) {
+            console.error(`Failed to close channel: ${error}`);
+            await interaction.reply({ content: "Failed to close the channel.", ephemeral: true });
+        }
+        return;
+    }
     if (!allowedChannels.has(interaction.channelId)) {
         // Inform user this channel is not permitted for bot interaction
         await interaction.reply({ content: 'I cannot work here. Please use the designated channels.', ephemeral: true });
         return;
     }
+
+    const guild = interaction.guild;
+    const member = interaction.member;
 
     // Define clear function for the 'clear' command
     async function clearChannelMessages(channel) {
@@ -129,6 +146,17 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     let userSession = userSessionMap.get(interaction.user.id);
+    if (!userSession) {
+        userSession = {
+            isBase: false,
+            isDream: false,
+            isHelp: false,
+            isEdit: false,
+            isChat: false,
+            isVariation: false,
+        };
+        userSessionMap.set(interaction.user.id, userSession);
+    }
 
     // Handle different command interactions
     switch (interaction.commandName) {
@@ -167,20 +195,20 @@ client.on("interactionCreate", async (interaction) => {
             await interaction.reply("Complete your prompt:");
             break;
 
-        case "edit":
-            if (currentUserIsUsingBot(interaction.user.id) || userSession.isEdit) {
-                await interaction.reply({ content: "You're already editing an image or please wait if the bot is currently in use.", ephemeral: true });
+        case "variation":
+            if (currentUserIsUsingBot(interaction.user.id) || userSession.isVariation) {
+                await interaction.reply({ content: "You're already creating a variation of an image or please wait if the bot is currently in use.", ephemeral: true });
                 return;
             }
 
-            setUserSession(interaction.user.id, { isEdit: true });
+            setUserSession(interaction.user.id, { isVariation: true });
             await interaction.deferReply({ ephemeral: true });
-            guild = interaction.guild;
-            member = interaction.member;
 
             try {
+                let num = getRandomNumber(1, 1000);
+                let name = `variation-${interaction.user.tag}-${num}`
                 const editChannel = await guild.channels.create({
-                    name: `edit-${interaction.user.tag}`,
+                    name: name,
                     type: ChannelType.GuildText,
                     permissionOverwrites: [
                         {
@@ -193,7 +221,41 @@ client.on("interactionCreate", async (interaction) => {
                         },
                     ],
                 });
-                await editChannel.send("Upload your image and provide your prompt for editing.");
+                let mentionString = `${interaction.user}`;
+                await editChannel.send(mentionString + "``` Upload your image to create a variation.```");
+            } catch (error) {
+                await interaction.followUp({ content: "Failed to create a private chat for image variations.", ephemeral: true });
+            }
+            break;
+        
+        case "edit":
+            if (currentUserIsUsingBot(interaction.user.id) || userSession.isEdit) {
+                await interaction.reply({ content: "You're already editing an image or please wait if the bot is currently in use.", ephemeral: true });
+                return;
+            }
+
+            setUserSession(interaction.user.id, { isEdit: true });
+            await interaction.deferReply({ ephemeral: true });
+
+            try {
+                let num = getRandomNumber(1, 1000);
+                let name = `edit-${interaction.user.tag}-${num}`
+                const editChannel = await guild.channels.create({
+                    name: name,
+                    type: ChannelType.GuildText,
+                    permissionOverwrites: [
+                        {
+                            id: guild.roles.everyone.id,
+                            deny: [PermissionsBitField.Flags.SendMessages],
+                        },
+                        {
+                            id: member.id,
+                            allow: [PermissionsBitField.Flags.SendMessages],
+                        },
+                    ],
+                });
+                let mentionString = `${interaction.user}`;
+                await editChannel.send(mentionString + "``` Upload your image to create a variation.```");
             } catch (error) {
                 await interaction.followUp({ content: "Failed to create a private chat for image editing.", ephemeral: true });
             }
@@ -207,12 +269,12 @@ client.on("interactionCreate", async (interaction) => {
 
             setUserSession(interaction.user.id, { isChat: true });
             await interaction.deferReply({ ephemeral: true });
-            const guild = interaction.guild;
-            const member = interaction.member;
 
             try {
+                let num = getRandomNumber(1, 1000);
+                let name = `chat-${interaction.user.tag}-${num}`
                 const chatChannel = await guild.channels.create({
-                    name: `chat-${interaction.user.tag}-` + Math.floor(Math.random() * 1000),
+                    name: name,
                     type: ChannelType.GuildText,
                     permissionOverwrites: [
                         {
@@ -225,6 +287,7 @@ client.on("interactionCreate", async (interaction) => {
                         },
                     ],
                 });
+                await interaction.followUp({ content: "Created a private chat channel for you.\nClick #" + name + " to chat.", ephemeral: true });
                 await chatChannel.send("You can now chat with your personal assistant in this private channel.");
             } catch (error) {
                 await interaction.followUp({ content: "Failed to create a private chat channel.", ephemeral: true });
@@ -252,10 +315,12 @@ client.on("messageCreate", async (msg) => {
         await handleDreamImageGeneration(msg);
     } else if (userSession.isHelp) {
         await handleHelpCommand(msg);
-    } else if (userSession.isEdit) {
-        await handleEditCommand(msg);
+    } else if (userSession.isVariation) {
+        await handleVariationCommand(msg);
     } else if (userSession.isChat) {
         await handleChatCommand(msg);
+    } else if (userSession.isEdit) {
+        await handleEditCommand(msg);
     }
 
 });
@@ -290,7 +355,7 @@ async function handleChatCommand(msg) {
     conversations.get(userId).push({ role: "user", content: content });
 
     const response = await openai.createChatCompletion({
-        model: "gpt-3.5-turbo-16k",
+        model: "gpt-4",
         messages: conversations.get(userId),
         temperature: 0.7,
         presence_penalty: 1,
@@ -329,57 +394,148 @@ async function handleChatCommand(msg) {
     setUserSession(msg.author.id, { isChat: false, someoneUsing: false }); // Ensuring to end the chat session
 }
 
-async function handleEditCommand(msg) {
+async function handleVariationCommand(msg) {
     if (currentUserIsUsingBot(msg.author.id) || !msg.channel.name.startsWith("edit-")) {
         return; // Early return if conditions are not met or the bot is in use
     }
 
     if (msg.attachments.size > 0) {
         let attachment = msg.attachments.first();
-        let mask = msg.attachments.last();
         let prompt = msg.content;
 
-        // Download the attachment
-        let response = await axios.get(attachment.url, {
-            responseType: "arraybuffer",
+        const { spawn } = require('child_process');
+        const condaPath = '/Users/mferr/AppData/Local/Microsoft/WindowsApps/python3.11.exe';
+        let file = `./image-variations`;
+
+        let condaArgs = [attachment.url, prompt];
+        const python = spawn(condaPath, [file, ...condaArgs]);
+
+        let channel = msg.channel;
+        let filenames = [];
+        await channel.send('```Using StableDiffusionImageVariationPipeline\nModel: ' + "sd-image-variations-diffusers" + '```');
+        const discordMessage = await channel.send('```Starting...```');
+
+
+        python.stdout.on('data', (data) => {
+            // Assuming filenames are printed line by line
+            filenames.push(data.toString().trim());
         });
-        let buffer = response.data;
 
-        let response1 = await axios.get(mask.url, {
-            responseType: "arraybuffer",
+        //print error
+        let messageQueue = [];
+        let isSending = false;
+
+        python.stderr.on('data', async (data) => {
+            console.error(`stderr: ${data}`);
+            messageQueue.push(data);
+
+            if (!isSending) {
+                isSending = true;
+                setInterval(sendMessage, 1000);
+            }
         });
-        let buffer1 = response1.data;
 
-        // Save it temporarily
-        fs.writeFile("./tempfile1.png", buffer, () =>
-            msg.reply("finished downloading image 1...")
-        );
-
-        fs.writeFile("./tempfile2.png", buffer1, () =>
-            msg.reply("finished downloading image 2...")
-        );
-
-        const aiResponse = await openai.createImageEdit(
-            fs.createReadStream("./tempfile1.png"),
-            prompt,
-            fs.createReadStream("./tempfile2.png"),
-            1, "512x512"
-        );
-
-        msg.reply("Awaiting response from AI...");
-
-        let links = aiResponse.data.data.map((element) => {
-            return element.url;
-        });
-        if (links.length > 0) {
-            links.forEach((element) => {
-                msg.reply(element);
-            });
-        } else {
-            msg.reply(
-                "The request was either blocked or the image could not be created."
-            );
+        function sendMessage() {
+            if (messageQueue.length > 0) {
+                let message = messageQueue.pop();
+                discordMessage.edit("```" + message + "```");
+                messageQueue = [];
+            } else {
+                isSending = false;  // If no messages left to send, stop the interval.
+                clearInterval(this);
+            }
         }
+
+        python.on('close', (code) => {
+            console.log(`Python script exited with code ${code}`);
+            // Send the images once the Python script has finished executing
+            for (let filename of filenames) {
+                //send to channel with CHANNEL_ID
+                channel.send({
+                    files: [filename]
+                });
+            }
+            setUserSession(msg.author.id, { isVariation: false, someoneUsing: false }); // Reset states
+        });
+        
+    } else {
+        msg.reply("Please upload an image and provide a prompt.");
+    }
+
+    setUserSession(msg.author.id, { isVariation: false, someoneUsing: false }); // Ensuring to free up the bot
+}
+
+async function handleEditCommand(msg) {
+    if (currentUserIsUsingBot(msg.author.id) || !msg.channel.name.startsWith("edit-")) {
+        return; // Early return if conditions are not met or the bot is in use
+    }
+    
+    if (msg.attachments.size > 0) {
+        let attachment = msg.attachments.first();
+        let attachment2 = msg.attachments.last();
+
+        if(!attachment2) {
+            msg.reply("Please upload 2 images and provide a prompt.");
+            return;
+        }
+        let prompt = msg.content;
+
+        const { spawn } = require('child_process');
+        const condaPath = '/Users/mferr/AppData/Local/Microsoft/WindowsApps/python3.11.exe';
+        let file = `./better-edit.py`;
+
+        let condaArgs = [attachment.url, attachment2.url, prompt];
+        const python = spawn(condaPath, [file, ...condaArgs]);
+
+        let channel = msg.channel;
+        let filenames = [];
+        await channel.send('```Using StableDiffusionXLInpaintPipeline\nModel: ' + "xl-refiner-1.0" + '```');
+        const discordMessage = await channel.send('```Starting...```');
+
+
+        python.stdout.on('data', (data) => {
+            // Assuming filenames are printed line by line
+            filenames.push(data.toString().trim());
+        });
+
+        //print error
+        let messageQueue = [];
+        let isSending = false;
+
+        python.stderr.on('data', async (data) => {
+            console.error(`stderr: ${data}`);
+            messageQueue.push(data);
+
+            if (!isSending) {
+                isSending = true;
+                setInterval(sendMessage, 1000);
+            }
+        });
+
+        function sendMessage() {
+            if (messageQueue.length > 0) {
+                let message = messageQueue.pop();
+                discordMessage.edit("```" + message + "```");
+                messageQueue = [];
+            } else {
+                isSending = false;  // If no messages left to send, stop the interval.
+                clearInterval(this);
+            }
+        }
+
+        python.on('close', (code) => {
+            console.log(`Python script exited with code ${code}`);
+            // Send the images once the Python script has finished executing
+
+            for (let filename of filenames) {
+                //send to channel with CHANNEL_ID
+                channel.send({
+                    files: [filename]
+                });
+            }
+            setUserSession(msg.author.id, { isEdit: false, someoneUsing: false }); // Reset states
+        }
+        );
     } else {
         msg.reply("Please upload an image and provide a prompt.");
     }
@@ -438,14 +594,21 @@ async function handleBaseImageGeneration(msg) {
         await msg.reply("Please wait until the bot is not in use to reduce GPU strain.");
         return;
     }
-    // Logic for processing the base image generation
-    msg.content = msg.content.toLowerCase();
-    await msg.reply("Generating your image... This might take some time.");
-    // Example call to an image generation function
-    await Try_Gen(msg.content, 0, msg);
 
-    // Update the bot usage state
-    setUserSession(msg.author.id, { isBase: false, someoneUsing: false }); // Reset states
+    msg.content = msg.content.toLowerCase();
+    // Inform the user that the process has started
+    const generationMessage = await msg.reply("Generating your image... This might take some time.");
+
+    // Call the image generation function asynchronously
+    try {
+        await Try_Gen(msg.content, 0, msg, generationMessage);
+    } catch (error) {
+        console.error("Error during image generation:", error);
+        await generationMessage.edit("Error occurred while generating the image.");
+    }
+
+    // Reset the user session
+    setUserSession(msg.author.id, { isBase: false, someoneUsing: false });
 }
 
 async function handleDreamImageGeneration(msg) {
@@ -455,10 +618,14 @@ async function handleDreamImageGeneration(msg) {
     }
     // Logic for processing the base image generation
     msg.content = msg.content.toLowerCase();
-    await msg.reply("Generating your image... This might take some time.");
+    const generationMessage = await msg.reply("Generating your image... This might take some time.");
     // Example call to an image generation function
-    await Try_Gen(msg.content, 1, msg);
-
+    try {
+        await Try_Gen(msg.content, 1, msg, generationMessage);
+    } catch (error) {
+        console.error("Error during image generation:", error);
+        await generationMessage.edit("Error occurred while generating the image.");
+    }
     // Update the bot usage state
     setUserSession(msg.author.id, { isDream: false, someoneUsing: false }); // Reset states
 }
@@ -475,7 +642,8 @@ async function Try_Gen(prompt, delimiter, msg) {
 
     const python = spawn(condaPath, [files[delimiter], condaArgs]);
     let channel = msg.channel;
-
+    let user = msg.author;
+    let mentionString = `${user}`;
     let filenames = [];
     await channel.send('```Using Stable Diffusion\nModel: ' + names[delimiter] + '```');
     const discordMessage = await channel.send('```Starting...```');
@@ -483,6 +651,7 @@ async function Try_Gen(prompt, delimiter, msg) {
 
     python.stdout.on('data', (data) => {
         // Assuming filenames are printed line by line
+        console.log(`stdout: ${data}`);
         filenames.push(data.toString().trim());
     });
 
@@ -511,16 +680,24 @@ async function Try_Gen(prompt, delimiter, msg) {
         }
     }
 
-    python.on('close', (code) => {
+    python.on('close', async (code) => {
         console.log(`Python script exited with code ${code}`);
-        // Send the images once the Python script has finished executing
         for (let filename of filenames) {
-            //send to channel with CHANNEL_ID
-            channel.send({
-                files: [filename]
+            console.log(filename);
+            await channel.send({ files: [filename] }).then (msg => {
+                // username string
+                let buildMentionString = `${mentionString}`;
+                msg.reply(buildMentionString);
+                fs.unlink(filename, (err) => {
+                    if (err) {
+                        console.error(err)
+                        return
+                    }
+                })
             });
         }
-        setUserSession(msg.author.id, { isDream: false, isBase: false, someoneUsing: false }); // Reset states
+        await discordMessage.edit("```Image generation completed.```");
+        setUserSession(msg.author.id, { isDream: false, isBase: false, someoneUsing: false });
     });
 
 }
@@ -542,4 +719,7 @@ function createSessionTimeout(userId) {
     }, 5 * 60 * 1000); // 5 minutes timeout
 }
 
+function getRandomNumber(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
 client.login(DISCORD_API_KEY);

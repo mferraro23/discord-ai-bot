@@ -1,5 +1,6 @@
 .env
 /biggan-512_2/
 /node_modules/
-.png
-
+/.png
+/Lib/
+/Scripts/

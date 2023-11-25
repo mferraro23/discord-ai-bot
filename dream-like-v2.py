@@ -2,7 +2,7 @@ from diffusers import StableDiffusionPipeline
 import torch
 import sys
 from PIL import Image
-
+import os
 
 def main():  # Load the model
     model_id = "dreamlike-art/dreamlike-photoreal-2.0"
@@ -31,16 +31,18 @@ def main():  # Load the model
         negative_prompt=neg_prompt,
         width=width,
         height=height,
-        num_inference_steps=110,
+        num_inference_steps=100,
         guidance_scale=12,
     ).images[0]
 
     # Upscale the image
-    upscale_factor = 3  # You can adjust this factor as needed
+    upscale_factor = 4  # You can adjust this factor as needed
     image_upscaled = image.resize(
         (width * upscale_factor, height * upscale_factor), Image.BICUBIC
     )
 
+    # set the filename to the prompt but all the spaces are replaced with underscores 
+    prompt = prompt.replace(" ", "_")
     image_filename = prompt[:20] + ".png"
     image_upscaled.save(image_filename)
 
@@ -57,7 +59,8 @@ def extract_negative_prompt(message):
             end_of_prompt = message[start_index:].lstrip()  # Remove leading whitespaces
             return end_of_prompt
         return None
-    
+
+
 def extract_positive_prompt(message):
     prefixes = ["positive:", "pos:", "positive prompt:"]
     for prefix in prefixes:
