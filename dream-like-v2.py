@@ -43,6 +43,8 @@ def main():  # Load the model
 
     # set the filename to the prompt but all the spaces are replaced with underscores 
     prompt = prompt.replace(" ", "_")
+    # remove any special characters from the prompt
+    prompt = ''.join(e for e in prompt if e.isalnum())
     image_filename = prompt[:20] + ".png"
     image_upscaled.save(image_filename)
 

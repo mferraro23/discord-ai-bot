@@ -6,7 +6,7 @@ const axios = require("axios");
 const fs = require("fs");
 
 // Validate required environment variables
-const requiredEnvVars = ['OPEN_API_KEY', 'DISCORD_API_KEY', 'APPLICATION_ID', 'CHANNEL_ID', 'CHANNEL_ID2'];
+const requiredEnvVars = ['OPEN_API_KEY', 'DISCORD_API_KEY', 'APPLICATION_ID', 'CHANNEL_ID', 'CHANNEL_ID2', 'CHANNEL_ID3'];
 requiredEnvVars.forEach(envVar => {
     if (!process.env[envVar]) {
         throw new Error(`Environment variable ${envVar} is missing`);
@@ -20,6 +20,7 @@ const DISCORD_API_KEY = process.env.DISCORD_API_KEY;
 const APPLICATION_ID = process.env.APPLICATION_ID;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const CHANNEL_ID2 = process.env.CHANNEL_ID2;
+const CHANNEL_ID3 = process.env.CHANNEL_ID3;
 //let blockedUsers = process.env.BLOCKED_USERS.split(",");
 let channel_user = null;
 
@@ -38,10 +39,6 @@ const commands = [
         description: "Replies with: Complete your prompt.",
     },
     {
-        name: "clear",
-        description: "Clears messages.",
-    },
-    {
         name: "edit",
         description: "Edit an image.",
     },
@@ -50,16 +47,8 @@ const commands = [
         description: "Create a variation of an image.",
     },
     {
-        name: "close",
-        description: "Close the private chat.",
-    },
-    {
         name: "chat",
         description: "Chat with your personal assistant.",
-    },
-    {
-        name: "create-channel",
-        description: "Create a channel.",
     },
     {
         name: "sd-base",
@@ -107,26 +96,10 @@ client.on('ready', async () => {
 });
 
 // Define allowed channels for bot commands
-const allowedChannels = new Set([CHANNEL_ID, CHANNEL_ID2]);
+const allowedChannels = new Set([CHANNEL_ID, CHANNEL_ID2, CHANNEL_ID3]);
 
 client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand() || interaction.user.bot) return;
-    if (interaction.commandName === 'close' && (interaction.channel.name.startsWith('edit-') || interaction.channel.name.startsWith('chat-') || interaction.channel.name.startsWith('variation-'))) {
-        try {
-            await interaction.channel.delete("Closing channel as requested.");
-            console.log(`Channel closed: ${interaction.channel.name}`);
-        } catch (error) {
-            console.error(`Failed to close channel: ${error}`);
-            await interaction.reply({ content: "Failed to close the channel.", ephemeral: true });
-        }
-        return;
-    }
-    if (!allowedChannels.has(interaction.channelId)) {
-        // Inform user this channel is not permitted for bot interaction
-        await interaction.reply({ content: 'I cannot work here. Please use the designated channels.', ephemeral: true });
-        return;
-    }
-
     const guild = interaction.guild;
     const member = interaction.member;
 
@@ -160,12 +133,6 @@ client.on("interactionCreate", async (interaction) => {
 
     // Handle different command interactions
     switch (interaction.commandName) {
-        case "clear":
-            await interaction.deferReply({ ephemeral: true });
-            const channelToClear = client.channels.cache.get(interaction.channelId.toString());
-            await clearChannelMessages(channelToClear);
-            break;
-
         case "sd-base":
             if (currentUserIsUsingBot(interaction.user.id)) {
                 await interaction.reply({ content: "Please wait until the bot is not in use to reduce GPU strain.", ephemeral: true });
